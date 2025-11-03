@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador Histórico de Moneda</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    
+    <!-- Chosen Palette: Calm Neutrals (Slate, Indigo, White) -->
+    <!-- Application Structure Plan: A single-page dashboard. The structure is designed for immediate answers and deep exploration. 1. 'Hoy' section: Instant metrics (today's price, 30-day avg) for a quick answer. 2. 'Perspectiva Histórica': An interactive line chart, the app's core, allowing users to select time ranges (30d, 6m, 1y). 3. 'Controles': A toggle to overlay 'Eventos Clave' on the chart. This directly addresses the user's need to correlate price with 'acontecimientos'. 4. 'Análisis' & 'Eventos': Dynamic text and list sections that update with the chart, providing qualitative context (the 'why'). This structure is better than a linear report as it empowers the user to find their own insights by changing timeframes and event visibility. -->
+    <!-- Visualization & Content Choices: 1. Report Info: Today's Price vs. History. Goal: Quick context. Viz: 'Big Number' metric card (HTML/Tailwind) & dynamic summary text (JS). Interaction: Text updates based on time range selection. Justification: Answers the user's primary question immediately. 2. Report Info: Historical Price Trend. Goal: Show change over time. Viz: Line Chart. Interaction: Buttons (30d, 6m, 1y) filter data. Justification: Standard for time-series. Library: Chart.js (Canvas). 3. Report Info: 'Acontecimientos' (Events). Goal: Correlate events with price. Viz: Vertical annotations on the line chart & a detailed list. Interaction: Checkbox toggles annotations on/off. Justification: Directly links 'what' (price) to 'why' (event), as requested. Library: Chart.js + chartjs-plugin-annotation (Canvas). -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 400px;
+            max-height: 50vh;
+        }
+        @media (max-width: 768px) {
+            .chart-container {
+                height: 300px;
+                max-height: 40vh;
+            }
+        }
+        .time-btn {
+            @apply px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2;
+        }
+        .time-btn-active {
+            @apply bg-indigo-50 text-indigo-700 border-indigo-300;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto max-w-7xl p-4 md:p-8">
+        
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-slate-900">Analizador Histórico de Moneda</h1>
+            <p class="text-lg text-slate-600">USD vs. ARS (Datos de Muestra)</p>
+        </header>
+
+        <section id="today-summary" class="mb-8">
+            <h2 class="text-2xl font-semibold text-slate-900 mb-4">Resumen de Hoy</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h3 class="text-sm font-medium text-slate-500 uppercase">Precio Actual</h3>
+                    <p id="today-price" class="text-4xl font-bold text-indigo-600 mt-2">$0.00</p>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h3 class="text-sm font-medium text-slate-500 uppercase">Promedio (Últimos 30 Días)</h3>
+                    <p id="30-day-avg" class="text-4xl font-bold text-slate-700 mt-2">$0.00</p>
+                </div>
+
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h3 class="text-sm font-medium text-slate-500 uppercase">Contexto Rápido</h3>
+                    <p id="quick-context" class="text-lg text-slate-700 mt-2 leading-tight h-full flex items-center">Calculando...</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="historical-perspective" class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4">
+                <div>
+                    <h2 class="text-2xl font-semibold text-slate-900">Perspectiva Histórica</h2>
+                    <p class="text-slate-600">Analiza la tendencia del precio a lo largo del tiempo.</p>
+                </div>
+                <div class="flex items-center space-x-2 mt-4 md:mt-0">
+                    <button class="time-btn" data-period="30">30 Días</button>
+                    <button class="time-btn" data-period="180">6 Meses</button>
+                    <button class="time-btn" data-period="365">1 Año</button>
+                </div>
+            </div>
+            
+            <div class="flex items-center justify-end mb-4">
+                <label for="show-events" class="flex items-center text-sm text-slate-600 cursor-pointer">
+                    <input type="checkbox" id="show-events" class="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500">
+                    <span class="ml-2">Mostrar Eventos Clave</span>
+                </label>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="priceChart"></canvas>
+            </div>
+        </section>
+
+        <section id="analysis-section" class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-2xl font-semibold text-slate-900 mb-4">Análisis del Período</h2>
+                <p class="text-slate-600 mb-4">Este análisis se actualiza según el rango de tiempo seleccionado en el gráfico. Te ayuda a entender si el precio actual es alto o bajo en comparación con el período elegido.</p>
+                <div id="period-analysis-content" class="space-y-3 text-slate-700">
+                    <p>Selecciona un período para ver el análisis.</p>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-2xl font-semibold text-slate-900 mb-4">Eventos Clave</h2>
+                <p class="text-slate-600 mb-4">Eventos políticos o económicos que pueden haber influido en la cotización.</p>
+                <div id="key-events-list" class="space-y-3 max-h-80 overflow-y-auto pr-2">
+                    <p class="text-slate-500">No hay eventos para mostrar en este período.</p>
+                </div>
+            </div>
+        </section>
+
+        <footer class="text-center text-slate-500 text-sm mt-12">
+            <p>*Esta aplicación utiliza datos de muestra generados aleatoriamente. Una implementación real se conectaría a una API de cotizaciones públicas.</p>
+        </footer>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            const MOCK_DATA = generateMockData(365);
+            const MOCK_EVENTS = [
+                { date: MOCK_DATA[30].date, event: 'Nuevas Regulaciones Cambiarias' },
+                { date: MOCK_DATA[90].date, event: 'Acuerdo con Acreedores' },
+                { date: MOCK_DATA[150].date, event: 'Elecciones Primarias (PASO)' },
+                { date: MOCK_DATA[210].date, event: 'Déficit Fiscal Anunciado' },
+                { date: MOCK_DATA[280].date, event: 'Aumento Tasa de Interés' },
+                { date: MOCK_DATA[340].date, event: 'Reporte de Inflación' },
+            ];
+
+            let currentChart = null;
+            let currentPeriod = 30;
+
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            
+            const timeButtons = document.querySelectorAll('.time-btn');
+            const showEventsCheckbox = document.getElementById('show-events');
+            
+            const todayPriceEl = document.getElementById('today-price');
+            const avg30DayEl = document.getElementById('30-day-avg');
+            const quickContextEl = document.getElementById('quick-context');
+            const periodAnalysisEl = document.getElementById('period-analysis-content');
+            const keyEventsListEl = document.getElementById('key-events-list');
+
+            function generateMockData(days) {
+                let data = [];
+                let price = 950.00;
+                const today = new Date();
+                for (let i = days - 1; i >= 0; i--) {
+                    let date = new Date(today);
+                    date.setDate(today.getDate() - i);
+                    
+                    let volatility = (Math.random() - 0.45) * 40;
+                    let trend = i / days * 0.5;
+                    price = price + volatility + trend;
+                    if (price < 800) price = 800 + Math.random() * 20;
+
+                    data.push({
+                        date: date.toISOString().split('T')[0],
+                        price: parseFloat(price.toFixed(2))
+                    });
+                }
+                return data;
+            }
+
+            function formatCurrency(value) {
+                return value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+            }
+
+            function getFilteredData(period) {
+                return MOCK_DATA.slice(-period);
+            }
+
+            function getFilteredEvents(period) {
+                const startDate = new Date();
+                startDate.setDate(startDate.getDate() - period);
+                const startDateStr = startDate.toISOString().split('T')[0];
+                
+                return MOCK_EVENTS.filter(event => event.date >= startDateStr);
+            }
+
+            function updateDashboard(period) {
+                currentPeriod = period;
+                
+                timeButtons.forEach(btn => {
+                    btn.classList.toggle('time-btn-active', parseInt(btn.dataset.period) === period);
+                });
+
+                const filteredData = getFilteredData(period);
+                const filteredEvents = getFilteredEvents(period);
+                const showEvents = showEventsCheckbox.checked;
+
+                updateSummary(filteredData);
+                updateChart(filteredData, filteredEvents, showEvents);
+                updateAnalysis(filteredData);
+                updateEventsList(filteredEvents);
+            }
+
+            function updateSummary(data) {
+                const data30Day = getFilteredData(30);
+                const todayPrice = data[data.length - 1].price;
+                const prices30Day = data30Day.map(d => d.price);
+                const avg30 = prices30Day.reduce((a, b) => a + b, 0) / prices30Day.length;
+
+                todayPriceEl.textContent = formatCurrency(todayPrice);
+                avg30DayEl.textContent = formatCurrency(avg30);
+
+                if (todayPrice > avg30 * 1.02) {
+                    quickContextEl.textContent = `Hoy está ${((todayPrice / avg30 - 1) * 100).toFixed(1)}% más caro que el promedio de 30 días.`;
+                    quickContextEl.className = 'text-lg text-red-600 mt-2 leading-tight h-full flex items-center';
+                } else if (todayPrice < avg30 * 0.98) {
+                    quickContextEl.textContent = `Hoy está ${((1 - todayPrice / avg30) * 100).toFixed(1)}% más barato que el promedio de 30 días.`;
+                    quickContextEl.className = 'text-lg text-green-600 mt-2 leading-tight h-full flex items-center';
+                } else {
+                    quickContextEl.textContent = `Hoy está en un valor similar al promedio de 30 días.`;
+                    quickContextEl.className = 'text-lg text-slate-700 mt-2 leading-tight h-full flex items-center';
+                }
+            }
+
+            function updateAnalysis(data) {
+                const prices = data.map(d => d.price);
+                const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+                const min = Math.min(...prices);
+                const max = Math.max(...prices);
+                const todayPrice = prices[prices.length - 1];
+                const startPrice = prices[0];
+                const trend = ((todayPrice / startPrice - 1) * 100).toFixed(1);
+
+                let trendText = trend > 0 ? `una suba del ${trend}%` : `una baja del ${Math.abs(trend)}%`;
+                if (Math.abs(trend) < 0.1) trendText = 'una cotización estable';
+
+                let comparisonText = '';
+                if (todayPrice > avg * 1.05) {
+                    comparisonText = 'Actualmente, el precio está en la parte alta de este período.';
+                } else if (todayPrice < avg * 0.95) {
+                    comparisonText = 'Actualmente, el precio está en la parte baja de este período.';
+                } else {
+                    comparisonText = 'Actualmente, el precio se sitúa cerca del promedio de este período.';
+                }
+
+                periodAnalysisEl.innerHTML = `
+                    <p>En los últimos <strong>${data.length} días</strong>, el precio ha tenido ${trendText}.</p>
+                    <ul class="list-disc list-inside space-y-1">
+                        <li><strong>Precio Actual:</strong> ${formatCurrency(todayPrice)}</li>
+                        <li><strong>Promedio del Período:</strong> ${formatCurrency(avg)}</li>
+                        <li><strong>Mínimo del Período:</strong> ${formatCurrency(min)}</li>
+                        <li><strong>Máximo del Período:</strong> ${formatCurrency(max)}</li>
+                    </ul>
+                    <p class="mt-2 font-semibold">${comparisonText}</p>
+                `;
+            }
+
+            function updateEventsList(events) {
+                if (events.length === 0) {
+                    keyEventsListEl.innerHTML = '<p class="text-slate-500">No hay eventos clave para mostrar en este período.</p>';
+                    return;
+                }
+                
+                keyEventsListEl.innerHTML = events
+                    .map(event => `
+                        <div class="border-b border-slate-200 pb-2">
+                            <p class="font-semibold text-slate-800">${event.event}</p>
+                            <p class="text-sm text-slate-500">${new Date(event.date + 'T00:00:00').toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                        </div>
+                    `)
+                    .reverse()
+                    .join('');
+            }
+
+            function updateChart(data, events, showEvents) {
+                const labels = data.map(d => d.date);
+                const prices = data.map(d => d.price);
+                
+                const annotations = {};
+                if (showEvents) {
+                    events.forEach((event, index) => {
+                        annotations[`line${index}`] = {
+                            type: 'line',
+                            xMin: event.date,
+                            xMax: event.date,
+                            borderColor: 'rgba(239, 68, 68, 0.7)',
+                            borderWidth: 2,
+                            borderDash: [6, 6],
+                            label: {
+                                content: event.event.split(' ')[0],
+                                display: true,
+                                position: 'start',
+                                backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                                font: { size: 10 },
+                                padding: 4,
+                                borderRadius: 4
+                            }
+                        };
+                    });
+                }
+
+                if (!currentChart) {
+                    currentChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Precio (ARS)',
+                                data: prices,
+                                borderColor: 'rgb(79, 70, 229)',
+                                backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                                fill: true,
+                                tension: 0.1,
+                                pointRadius: 0,
+                                pointHitRadius: 10,
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                x: {
+                                    type: 'time',
+                                    time: {
+                                        unit: 'day',
+                                        tooltipFormat: 'dd/MM/yyyy',
+                                        displayFormats: {
+                                            day: 'dd MMM'
+                                        }
+                                    },
+                                    grid: {
+                                        display: false
+                                    },
+                                    ticks: {
+                                        autoSkip: true,
+                                        maxTicksLimit: 10
+                                    }
+                                },
+                                y: {
+                                    beginAtZero: false,
+                                    ticks: {
+                                        callback: function(value) {
+                                            return formatCurrency(value);
+                                        }
+                                    }
+                                }
+                            },
+                            plugins: {
+                                tooltip: {
+                                    intersect: false,
+                                    mode: 'index',
+                                    callbacks: {
+                                        label: function(context) {
+                                            return `Precio: ${formatCurrency(context.parsed.y)}`;
+                                        }
+                                    }
+                                },
+                                legend: {
+                                    display: false
+                                },
+                                annotation: {
+                                    annotations: annotations
+                                }
+                            },
+                            interaction: {
+                                intersect: false,
+                                mode: 'nearest',
+                                axis: 'x'
+                            }
+                        }
+                    });
+                } else {
+                    currentChart.data.labels = labels;
+                    currentChart.data.datasets[0].data = prices;
+                    currentChart.options.plugins.annotation.annotations = annotations;
+                    
+                    if (data.length <= 60) {
+                        currentChart.options.scales.x.time.unit = 'day';
+                        currentChart.options.scales.x.time.displayFormats.day = 'dd MMM';
+                    } else if (data.length <= 365) {
+                         currentChart.options.scales.x.time.unit = 'month';
+                         currentChart.options.scales.x.time.displayFormats.day = 'MMM yy';
+                    }
+
+                    currentChart.update();
+                }
+            }
+
+            timeButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    updateDashboard(parseInt(button.dataset.period));
+                });
+            });
+
+            showEventsCheckbox.addEventListener('change', () => {
+                updateDashboard(currentPeriod);
+            });
+
+            updateDashboard(currentPeriod);
+        });
+    </script>
+</body>
+</html>
+
